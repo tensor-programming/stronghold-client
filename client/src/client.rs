@@ -155,6 +155,6 @@ mod tests {
 
         println!("{:?}", client.cache);
 
-        client.create_record(key, b"dicks".to_vec());
+        client.create_record(key, b"data".to_vec());
     }
 }
