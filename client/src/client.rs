@@ -43,48 +43,84 @@ impl<P: BoxProvider + Send + Sync + 'static> Client<P> {
     }
 
     pub fn create_record(&mut self, key: Key<P>, payload: Vec<u8>) -> Option<Id> {
-        let vault = self.vaults.remove(&key).expect(line_error!());
+        let uid = self.id;
 
-        let id = if let Some(v) = vault {
-            let (id, req) = v
-                .writer(self.id)
-                .write(&payload, RecordHint::new(b"").expect(line_error!()))
-                .expect(line_error!());
+        self.take(key, |view| {
+            let id = if let Some(v) = view {
+                let (id, req) = v
+                    .writer(uid)
+                    .write(&payload, RecordHint::new(b"").expect(line_error!()))
+                    .expect(line_error!());
+                req.into_iter().for_each(|r| {
+                    send_until_success(CRequest::Write(r));
+                });
+                Some(id)
+            } else {
+                None
+            };
 
-            req.into_iter().for_each(|r| {
-                send_until_success(CRequest::Write(r));
-            });
-
-            Some(id)
-        } else {
-            None
-        };
-
-        let req = send_until_success(CRequest::List).list();
-
-        self.vaults
-            .insert(key.clone(), Some(DBView::load(key, req).expect(line_error!())));
-
-        id
+            id
+        })
     }
 
     pub fn read_record(&mut self, key: Key<P>, id: Id) {
+        self.take(key, |view| {
+            if let Some(v) = view {
+                let read = v.reader().prepare_read(id).expect("unable to read id");
+                if let CResult::Read(read) = send_until_success(CRequest::Read(read)) {
+                    let record = v.reader().read(read).expect(line_error!());
+                    println!("Plain: {:?}", String::from_utf8(record).unwrap());
+                }
+            }
+        });
+    }
+
+    pub fn preform_gc(&mut self, key: Key<P>) {
+        let uid = self.id;
+        self.take(key, |view| {
+            if let Some(v) = view {
+                let (to_write, to_delete) = v.writer(uid).gc().expect(line_error!());
+                to_write.into_iter().for_each(|r| {
+                    send_until_success(CRequest::Write(r));
+                });
+                to_delete.into_iter().for_each(|r| {
+                    send_until_success(CRequest::Delete(r));
+                });
+            };
+        })
+    }
+
+    pub fn revoke_record_by_id(&mut self, id: Id, key: Key<P>) {
+        let uid = self.id;
+        self.take(key, |view| {
+            if let Some(v) = view {
+                let (to_write, to_delete) = v.writer(uid).revoke(id).expect(line_error!());
+
+                send_until_success(CRequest::Write(to_write));
+                send_until_success(CRequest::Delete(to_delete));
+            };
+        })
+    }
+
+    pub fn list_valid_ids_for_vault(&mut self, key: Key<P>) {
+        self.take(key, |view| {
+            if let Some(v) = view {
+                v.records()
+                    .for_each(|(id, hint)| println!("Id: {:?}, Hint: {:?}", id, hint))
+            };
+        });
+    }
+
+    pub fn take<T>(&mut self, key: Key<P>, f: impl FnOnce(Option<DBView<P>>) -> T) -> T {
         let vault = self.vaults.remove(&key).expect(line_error!());
 
-        if let Some(v) = vault {
-            let read = v.reader().prepare_read(id).expect("unable to read id");
-
-            if let CResult::Read(read) = send_until_success(CRequest::Read(read)) {
-                let record = v.reader().read(read).expect(line_error!());
-
-                println!("Plain: {:?}", String::from_utf8(record).unwrap());
-            }
-        }
+        let ret = f(vault);
 
         let req = send_until_success(CRequest::List).list();
-
         self.vaults
             .insert(key.clone(), Some(DBView::load(key, req).expect(line_error!())));
+
+        ret
     }
 }
 
@@ -108,7 +144,13 @@ mod tests {
         let mut client = client.add_vault(&key_2);
 
         let tx_id_2 = client.create_record(key_2.clone(), b"more_data".to_vec());
-        client.read_record(key_2, tx_id_2.unwrap());
+        client.list_valid_ids_for_vault(key.clone());
+        client.list_valid_ids_for_vault(key_2.clone());
+        client.read_record(key_2.clone(), tx_id_2.unwrap());
         client.read_record(key, tx_id.unwrap());
+
+        client.revoke_record_by_id(tx_id_2.unwrap(), key_2.clone());
+
+        client.preform_gc(key_2);
     }
 }
