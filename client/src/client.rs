@@ -8,7 +8,7 @@ use crate::{
     cache::{send_until_success, CRequest, CResult},
     line_error,
 };
-#[derive(Debug)]
+
 pub struct Client<P: BoxProvider> {
     id: Id,
     vaults: HashMap<Key<P>, Option<DBView<P>>>,
