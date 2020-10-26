@@ -5,21 +5,13 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cache::{send_until_success, CRequest},
-    line_error, Cache,
+    cache::{send_until_success, CRequest, CResult},
+    line_error,
 };
-
-#[derive(Clone)]
+#[derive(Debug)]
 pub struct Client<P: BoxProvider> {
     id: Id,
-    vault: Vault<P>,
-    cache: Cache<Vec<u8>, Vec<u8>>,
-}
-
-#[derive(Serialize, Deserialize, Clone)]
-pub struct Vault<P: BoxProvider> {
-    ids: HashMap<Id, Key<P>>,
-    dbs: HashMap<Key<P>, Option<DBView<P>>>,
+    vaults: HashMap<Key<P>, Option<DBView<P>>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -30,114 +22,69 @@ pub struct Snapshot<P: BoxProvider> {
 }
 
 impl<P: BoxProvider + Send + Sync + 'static> Client<P> {
-    pub fn new(key: Key<P>, id: Id) -> Self {
-        let cache = Cache::new();
-        let vault = Vault::new(cache.clone(), &key, id);
+    pub fn new(id: Id) -> Self {
+        let vaults = HashMap::<Key<P>, Option<DBView<P>>>::new();
 
-        Self { id, vault, cache }
+        Self { id, vaults }
     }
 
-    pub fn init_chain(key: Key<P>, id: Id) -> Self {
-        let req = DBWriter::<P>::create_chain(&key, id);
+    pub fn add_vault(self, key: &Key<P>) -> Self {
+        let req = DBWriter::<P>::create_chain(&key, self.id);
 
-        let cache = Cache::new();
+        send_until_success(CRequest::Write(req));
 
-        send_until_success(cache.clone(), CRequest::Write(req));
+        let req = send_until_success(CRequest::List).list();
+        let view = DBView::<P>::load(key.clone(), req).expect(line_error!());
 
-        let vault = Vault::new(cache.clone(), &key, id);
+        let mut vaults = self.vaults;
+        vaults.insert(key.clone(), Some(view));
 
-        Self { id, vault, cache }
+        Self { vaults: vaults, ..self }
     }
 
-    pub fn add_new_chain(self, key: Key<P>, id: Id) -> Self {
-        let req = DBWriter::<P>::create_chain(&key, id);
+    pub fn create_record(&mut self, key: Key<P>, payload: Vec<u8>) -> Option<Id> {
+        let vault = self.vaults.remove(&key).expect(line_error!());
 
-        let cache = Cache::new();
-
-        send_until_success(cache.clone(), CRequest::Write(req));
-
-        let vault = self.vault.add(cache.clone(), &key, id);
-
-        Self { id, vault, cache }
-    }
-
-    pub fn create_record(self, key: Key<P>, payload: Vec<u8>) -> Id {
-        let cache = self.cache.clone();
-        let sid = self.id.clone();
-
-        self.vault.take_view(self.cache.clone(), key, |view| {
-            let (id, req) = view
-                .writer(sid)
+        let id = if let Some(v) = vault {
+            let (id, req) = v
+                .writer(self.id)
                 .write(&payload, RecordHint::new(b"").expect(line_error!()))
                 .expect(line_error!());
 
-            req.into_iter().for_each(|req| {
-                send_until_success(cache.clone(), CRequest::Write(req));
+            req.into_iter().for_each(|r| {
+                send_until_success(CRequest::Write(r));
             });
 
-            id
-        })
-    }
-
-    pub fn list_all_records(self, key: Key<P>) {
-        self.vault.take_view(self.cache, key, |view| {
-            view.records()
-                .for_each(|(id, hint)| println!("id: {:?}, hint: {:?}", id, hint))
-        });
-    }
-
-    pub fn list_all_ids(self, key: Key<P>) {
-        self.vault.take_view(self.cache, key, |view| {
-            view.all().for_each(|id| println!("Id: {:?}", id))
-        });
-    }
-
-    pub fn list_all_owned_keys(self, id: Id) {
-        println!("{:?}", self.vault.ids.get(&id).expect(line_error!()));
-    }
-}
-
-impl<P: BoxProvider> Vault<P> {
-    pub fn new(cache: Cache<Vec<u8>, Vec<u8>>, key: &Key<P>, id: Id) -> Self {
-        let mut ids: HashMap<Id, Key<P>> = HashMap::new();
-        let mut dbs: HashMap<Key<P>, Option<DBView<P>>> = HashMap::new();
-
-        let req = send_until_success(cache, CRequest::List).list();
-        let view = DBView::load(key.clone(), req).expect(line_error!());
-
-        ids.insert(id, key.clone());
-        dbs.insert(key.clone(), Some(view));
-
-        Self { ids, dbs }
-    }
-
-    pub fn add(mut self, cache: Cache<Vec<u8>, Vec<u8>>, key: &Key<P>, id: Id) -> Self {
-        if self.dbs.get(&key).is_some() {
-            self
+            Some(id)
         } else {
-            let req = send_until_success(cache, CRequest::List).list();
-            let view = DBView::load(key.clone(), req).expect(line_error!());
+            None
+        };
 
-            let key = self.ids.get_mut(&id).expect(line_error!());
+        let req = send_until_success(CRequest::List).list();
 
-            self.dbs.insert(key.clone(), Some(view));
+        self.vaults
+            .insert(key.clone(), Some(DBView::load(key, req).expect(line_error!())));
 
-            self
-        }
+        id
     }
 
-    pub fn take_view<T>(self, cache: Cache<Vec<u8>, Vec<u8>>, key: Key<P>, mut f: impl FnMut(DBView<P>) -> T) -> T {
-        let mut dbs = self.dbs;
+    pub fn read_record(&mut self, key: Key<P>, id: Id) {
+        let vault = self.vaults.remove(&key).expect(line_error!());
 
-        let mut _view = dbs.get_mut(&key).expect(line_error!());
-        let view = _view.take().expect(line_error!());
+        if let Some(v) = vault {
+            let read = v.reader().prepare_read(id).expect("unable to read id");
 
-        let retval = f(view);
+            if let CResult::Read(read) = send_until_success(CRequest::Read(read)) {
+                let record = v.reader().read(read).expect(line_error!());
 
-        let req = send_until_success(cache.clone(), CRequest::List).list();
-        *_view = Some(DBView::load(key.clone(), req).expect(line_error!()));
+                println!("Plain: {:?}", String::from_utf8(record).unwrap());
+            }
+        }
 
-        retval
+        let req = send_until_success(CRequest::List).list();
+
+        self.vaults
+            .insert(key.clone(), Some(DBView::load(key, req).expect(line_error!())));
     }
 }
 
@@ -151,10 +98,17 @@ mod tests {
         let id = Id::random::<Provider>().expect(line_error!());
         let key = Key::<Provider>::random().expect(line_error!());
 
-        let client = Client::init_chain(key.clone(), id);
+        let client = Client::new(id);
+        let mut client = client.add_vault(&key);
 
-        println!("{:?}", client.cache);
+        let tx_id = client.create_record(key.clone(), b"data".to_vec());
 
-        client.create_record(key, b"data".to_vec());
+        let key_2 = Key::<Provider>::random().expect(line_error!());
+
+        let mut client = client.add_vault(&key_2);
+
+        let tx_id_2 = client.create_record(key_2.clone(), b"more_data".to_vec());
+        client.read_record(key_2, tx_id_2.unwrap());
+        client.read_record(key, tx_id.unwrap());
     }
 }
