@@ -1,14 +1,10 @@
-use std::{collections::HashMap, fmt::Debug, hash::Hash};
+use std::{collections::HashMap, fmt::Debug, hash::Hash, sync::RwLock};
 
 use vault::{DeleteRequest, ListResult, ReadRequest, ReadResult, WriteRequest};
-
-use std::{thread, time::Duration};
 
 use crate::line_error;
 
 use once_cell::sync::Lazy;
-
-use std::sync::RwLock;
 
 static CACHE: Lazy<RwLock<Cache<Vec<u8>, Vec<u8>>>> = Lazy::new(|| RwLock::new(Cache::new()));
 
@@ -71,7 +67,7 @@ where
     }
 }
 
-pub fn send(req: CRequest) -> Option<CResult> {
+pub fn send(req: CRequest) -> CResult {
     let result = match req {
         CRequest::List => {
             let entries = CACHE.read().expect(line_error!()).table.keys().cloned().collect();
@@ -103,18 +99,7 @@ pub fn send(req: CRequest) -> Option<CResult> {
         }
     };
 
-    Some(result)
-}
-
-pub fn send_until_success(req: CRequest) -> CResult {
-    loop {
-        match send(req.clone()) {
-            Some(result) => {
-                break result;
-            }
-            None => thread::sleep(Duration::from_millis(50)),
-        }
-    }
+    result
 }
 
 impl CResult {

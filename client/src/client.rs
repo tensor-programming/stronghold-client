@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    cache::{send_until_success, CRequest, CResult},
+    cache::{send, CRequest, CResult},
     line_error,
 };
 
@@ -31,9 +31,9 @@ impl<P: BoxProvider + Send + Sync + 'static> Client<P> {
     pub fn add_vault(self, key: &Key<P>) -> Self {
         let req = DBWriter::<P>::create_chain(&key, self.id);
 
-        send_until_success(CRequest::Write(req));
+        send(CRequest::Write(req));
 
-        let req = send_until_success(CRequest::List).list();
+        let req = send(CRequest::List).list();
         let view = DBView::<P>::load(key.clone(), req).expect(line_error!());
 
         let mut vaults = self.vaults;
@@ -52,7 +52,7 @@ impl<P: BoxProvider + Send + Sync + 'static> Client<P> {
                     .write(&payload, RecordHint::new(b"").expect(line_error!()))
                     .expect(line_error!());
                 req.into_iter().for_each(|r| {
-                    send_until_success(CRequest::Write(r));
+                    send(CRequest::Write(r));
                 });
                 Some(id)
             } else {
@@ -67,7 +67,7 @@ impl<P: BoxProvider + Send + Sync + 'static> Client<P> {
         self.take(key, |view| {
             if let Some(v) = view {
                 let read = v.reader().prepare_read(id).expect("unable to read id");
-                if let CResult::Read(read) = send_until_success(CRequest::Read(read)) {
+                if let CResult::Read(read) = send(CRequest::Read(read)) {
                     let record = v.reader().read(read).expect(line_error!());
                     println!("Plain: {:?}", String::from_utf8(record).unwrap());
                 }
@@ -81,10 +81,10 @@ impl<P: BoxProvider + Send + Sync + 'static> Client<P> {
             if let Some(v) = view {
                 let (to_write, to_delete) = v.writer(uid).gc().expect(line_error!());
                 to_write.into_iter().for_each(|r| {
-                    send_until_success(CRequest::Write(r));
+                    send(CRequest::Write(r));
                 });
                 to_delete.into_iter().for_each(|r| {
-                    send_until_success(CRequest::Delete(r));
+                    send(CRequest::Delete(r));
                 });
             };
         })
@@ -96,8 +96,8 @@ impl<P: BoxProvider + Send + Sync + 'static> Client<P> {
             if let Some(v) = view {
                 let (to_write, to_delete) = v.writer(uid).revoke(id).expect(line_error!());
 
-                send_until_success(CRequest::Write(to_write));
-                send_until_success(CRequest::Delete(to_delete));
+                send(CRequest::Write(to_write));
+                send(CRequest::Delete(to_delete));
             };
         })
     }
@@ -116,7 +116,7 @@ impl<P: BoxProvider + Send + Sync + 'static> Client<P> {
 
         let ret = f(vault);
 
-        let req = send_until_success(CRequest::List).list();
+        let req = send(CRequest::List).list();
         self.vaults
             .insert(key.clone(), Some(DBView::load(key, req).expect(line_error!())));
 
