@@ -6,18 +6,14 @@ use crate::line_error;
 
 use once_cell::sync::Lazy;
 
-static CACHE: Lazy<RwLock<Cache<Vec<u8>, Vec<u8>>>> = Lazy::new(|| RwLock::new(Cache::new()));
+static CACHE: Lazy<RwLock<Cache>> = Lazy::new(|| RwLock::new(Cache::new()));
 
 #[derive(Clone, Debug)]
 pub struct Value<T>(T);
 
 #[derive(Clone, Debug)]
-pub struct Cache<K, V>
-where
-    K: Hash + Eq,
-    V: Clone + Debug,
-{
-    table: HashMap<K, Value<V>>,
+pub struct Cache {
+    table: HashMap<Vec<u8>, Value<Vec<u8>>>,
 }
 
 #[derive(Clone)]
@@ -36,25 +32,21 @@ pub enum CResult {
     Read(ReadResult),
 }
 
-impl<K, V> Cache<K, V>
-where
-    K: Hash + Eq,
-    V: Clone + Debug,
-{
+impl Cache {
     pub fn new() -> Self {
         Cache { table: HashMap::new() }
     }
 
-    pub fn add_data(&mut self, key: K, value: V) {
+    pub fn add_data(&mut self, key: Vec<u8>, value: Vec<u8>) {
         self.table.insert(key, Value::new(value));
     }
 
-    pub fn read_data(&self, key: K) -> Value<V> {
+    pub fn read_data(&self, key: Vec<u8>) -> Value<Vec<u8>> {
         self.table.get(&key).expect(line_error!()).clone()
     }
 
-    pub fn offload_data(self) -> HashMap<K, V> {
-        let mut ret: HashMap<K, V> = HashMap::new();
+    pub fn offload_data(self) -> HashMap<Vec<u8>, Vec<u8>> {
+        let mut ret: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
 
         self.table.into_iter().for_each(|(k, v)| {
             ret.insert(k, v.0);
@@ -63,7 +55,7 @@ where
         ret
     }
 
-    pub fn upload_data(mut self, map: HashMap<K, V>) {
+    pub fn upload_data(mut self, map: HashMap<Vec<u8>, Vec<u8>>) {
         map.into_iter().for_each(|(k, v)| {
             self.table.insert(k, Value::new(v));
         });
