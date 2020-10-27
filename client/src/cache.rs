@@ -9,12 +9,15 @@ use once_cell::sync::Lazy;
 static CACHE: Lazy<RwLock<Cache<Vec<u8>, Vec<u8>>>> = Lazy::new(|| RwLock::new(Cache::new()));
 
 #[derive(Clone, Debug)]
+pub struct Value<T>(T);
+
+#[derive(Clone, Debug)]
 pub struct Cache<K, V>
 where
     K: Hash + Eq,
     V: Clone + Debug,
 {
-    table: HashMap<K, V>,
+    table: HashMap<K, Value<V>>,
 }
 
 #[derive(Clone)]
@@ -43,10 +46,10 @@ where
     }
 
     pub fn add_data(&mut self, key: K, value: V) {
-        self.table.insert(key, value);
+        self.table.insert(key, Value::new(value));
     }
 
-    pub fn read_data(&self, key: K) -> V {
+    pub fn read_data(&self, key: K) -> Value<V> {
         self.table.get(&key).expect(line_error!()).clone()
     }
 
@@ -54,7 +57,7 @@ where
         let mut ret: HashMap<K, V> = HashMap::new();
 
         self.table.into_iter().for_each(|(k, v)| {
-            ret.insert(k, v);
+            ret.insert(k, v.0);
         });
 
         ret
@@ -62,8 +65,14 @@ where
 
     pub fn upload_data(mut self, map: HashMap<K, V>) {
         map.into_iter().for_each(|(k, v)| {
-            self.table.insert(k, v);
+            self.table.insert(k, Value::new(v));
         });
+    }
+}
+
+impl<T> Value<T> {
+    pub fn new(val: T) -> Self {
+        Self(val)
     }
 }
 
@@ -95,7 +104,7 @@ pub fn send(req: CRequest) -> CResult {
         CRequest::Read(read) => {
             let state = CACHE.read().expect(line_error!()).read_data(read.id().to_vec());
 
-            CResult::Read(ReadResult::new(read.into(), state))
+            CResult::Read(ReadResult::new(read.into(), state.0))
         }
     };
 
