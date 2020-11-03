@@ -1,13 +1,15 @@
 use vault::{BoxProvider, Id, Key};
 
-use std::collections::{HashMap, HashSet};
-use std::marker::PhantomData;
+use std::{
+    collections::{HashMap, HashSet},
+    marker::PhantomData,
+};
 
 use serde::{Deserialize, Serialize};
 
-use crate::cache::{Vault, Vaults};
+use crate::data::Bucket;
 
-pub struct Client<P: BoxProvider + Send + Sync + 'static, V: Vault<P>> {
+pub struct Client<P: BoxProvider + Send + Sync + 'static, V: Bucket<P>> {
     id: Id,
     vaults: V,
     _provider: PhantomData<P>,
@@ -20,7 +22,7 @@ pub struct Snapshot<P: BoxProvider> {
     state: HashMap<Vec<u8>, Vec<u8>>,
 }
 
-impl<P: BoxProvider + Send + Sync + 'static, V: Vault<P>> Client<P, V> {
+impl<P: BoxProvider + Send + Sync + 'static, V: Bucket<P>> Client<P, V> {
     pub fn new(id: Id, vaults: V) -> Self {
         Self {
             id,
@@ -52,23 +54,12 @@ impl<P: BoxProvider + Send + Sync + 'static, V: Vault<P>> Client<P, V> {
     pub fn list_valid_ids_for_vault(&mut self, key: Key<P>) {
         self.vaults.list_all_valid_by_key(key)
     }
-
-    // pub fn take<T>(&mut self, key: Key<P>, f: impl FnOnce(Option<DBView<P>>) -> T) -> T {
-    //     let vault = self.vaults.remove(&key).expect(line_error!());
-
-    //     let ret = f(vault);
-
-    //     let req = self.bucket.send(CRequest::List).list();
-    //     self.vaults
-    //         .insert(key.clone(), Some(DBView::load(key, req).expect(line_error!())));
-
-    //     ret
-    // }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::data::Blob;
     use crate::line_error;
     use crate::provider::Provider;
 
@@ -77,7 +68,7 @@ mod tests {
         let id = Id::random::<Provider>().expect(line_error!());
         let key = Key::<Provider>::random().expect(line_error!());
 
-        let vaults = Vaults::new();
+        let vaults = Blob::new();
 
         let mut client = Client::new(id, vaults);
         client.add_vault(&key);

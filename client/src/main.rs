@@ -1,5 +1,6 @@
 mod cache;
 mod client;
+mod data;
 mod provider;
 
 pub use crate::cache::Cache;
