@@ -5,10 +5,10 @@ use crate::{
     line_error,
 };
 
-use std::collections::HashMap;
+use dashmap::DashMap;
 
 pub struct Blob<P: BoxProvider + Send + Sync + 'static> {
-    vaults: HashMap<Key<P>, Option<DBView<P>>>,
+    vaults: DashMap<Key<P>, Option<DBView<P>>>,
     cache: Cache,
 }
 
@@ -24,13 +24,15 @@ pub trait Bucket<P: BoxProvider + Send + Sync + 'static> {
 impl<P: BoxProvider + Send + Sync + 'static> Blob<P> {
     pub fn new() -> Self {
         let cache = Cache::new();
-        let vaults = HashMap::new();
+        let vaults = DashMap::new();
 
         Self { cache, vaults }
     }
 
     pub fn get_view(&mut self, key: &Key<P>) -> Option<DBView<P>> {
-        self.vaults.remove(key).expect(line_error!())
+        let (_, view) = self.vaults.remove(key).expect(line_error!());
+
+        view
     }
 
     pub fn reset_view(&mut self, key: Key<P>) {

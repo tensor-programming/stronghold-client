@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::data::Bucket;
 
-pub struct Client<P: BoxProvider + Send + Sync + 'static, V: Bucket<P>> {
+pub struct Client<P: BoxProvider + Send + Sync + 'static, B: Bucket<P>> {
     id: Id,
-    vaults: V,
+    blobs: B,
     _provider: PhantomData<P>,
 }
 
@@ -22,37 +22,37 @@ pub struct Snapshot<P: BoxProvider> {
     state: HashMap<Vec<u8>, Vec<u8>>,
 }
 
-impl<P: BoxProvider + Send + Sync + 'static, V: Bucket<P>> Client<P, V> {
-    pub fn new(id: Id, vaults: V) -> Self {
+impl<P: BoxProvider + Send + Sync + 'static, B: Bucket<P>> Client<P, B> {
+    pub fn new(id: Id, blobs: B) -> Self {
         Self {
             id,
-            vaults,
+            blobs,
             _provider: PhantomData,
         }
     }
 
     pub fn add_vault(&mut self, key: &Key<P>) {
-        self.vaults.add_vault(key, self.id);
+        self.blobs.add_vault(key, self.id);
     }
 
     pub fn create_record(&mut self, key: Key<P>, payload: Vec<u8>) -> Option<Id> {
-        self.vaults.create_record(self.id, key, payload)
+        self.blobs.create_record(self.id, key, payload)
     }
 
     pub fn read_record(&mut self, key: Key<P>, id: Id) {
-        self.vaults.read_record(id, key);
+        self.blobs.read_record(id, key);
     }
 
     pub fn preform_gc(&mut self, key: Key<P>) {
-        self.vaults.garbage_collect(self.id, key)
+        self.blobs.garbage_collect(self.id, key)
     }
 
     pub fn revoke_record_by_id(&mut self, id: Id, key: Key<P>) {
-        self.vaults.revoke_record(self.id, id, key)
+        self.blobs.revoke_record(self.id, id, key)
     }
 
     pub fn list_valid_ids_for_vault(&mut self, key: Key<P>) {
-        self.vaults.list_all_valid_by_key(key)
+        self.blobs.list_all_valid_by_key(key)
     }
 }
 
@@ -68,9 +68,9 @@ mod tests {
         let id = Id::random::<Provider>().expect(line_error!());
         let key = Key::<Provider>::random().expect(line_error!());
 
-        let vaults = Blob::new();
+        let blobs = Blob::new();
 
-        let mut client = Client::new(id, vaults);
+        let mut client = Client::new(id, blobs);
         client.add_vault(&key);
 
         let tx_id = client.create_record(key.clone(), b"data".to_vec());

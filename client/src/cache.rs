@@ -1,5 +1,6 @@
 use std::{collections::HashMap, fmt::Debug};
 
+use dashmap::DashMap;
 use vault::{DeleteRequest, ListResult, ReadRequest, ReadResult, WriteRequest};
 
 use crate::line_error;
@@ -9,7 +10,7 @@ pub struct Value<T>(T);
 
 #[derive(Clone, Debug)]
 pub struct Cache {
-    table: HashMap<Vec<u8>, Value<Vec<u8>>>,
+    table: DashMap<Vec<u8>, Value<Vec<u8>>>,
 }
 
 #[derive(Clone)]
@@ -30,7 +31,7 @@ pub enum CResult {
 
 impl Cache {
     pub fn new() -> Self {
-        Cache { table: HashMap::new() }
+        Cache { table: DashMap::new() }
     }
 
     fn add_data(&mut self, key: Vec<u8>, value: Vec<u8>) {
@@ -51,7 +52,7 @@ impl Cache {
         ret
     }
 
-    pub fn upload_data(mut self, map: HashMap<Vec<u8>, Vec<u8>>) {
+    pub fn upload_data(self, map: HashMap<Vec<u8>, Vec<u8>>) {
         map.into_iter().for_each(|(k, v)| {
             self.table.insert(k, Value::new(v));
         });
@@ -60,7 +61,7 @@ impl Cache {
     pub fn send(&mut self, req: CRequest) -> CResult {
         let result = match req {
             CRequest::List => {
-                let entries = self.table.keys().cloned().collect();
+                let entries = self.table.clone().into_read_only().keys().map(|k| k.clone()).collect();
                 CResult::List(ListResult::new(entries))
             }
             CRequest::Write(write) => {
