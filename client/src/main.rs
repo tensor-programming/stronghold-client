@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod actor_test_client;
 mod cache;
 mod client;
 mod data;
