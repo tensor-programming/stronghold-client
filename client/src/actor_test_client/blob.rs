@@ -5,20 +5,22 @@ use vault::{Id, Key};
 
 use serde::{Deserialize, Serialize};
 
-use crate::data::Blob;
+use crate::data::{Blob, Bucket};
 use crate::provider::Provider;
 
 actors_rs::builder!(
     #[derive(Clone)]
-    BlobBuilder {}
+    BlobBuilder { id: Id }
 );
 
 #[derive(Serialize, Deserialize)]
 pub enum BlobEvent {
     Create(Key<Provider>, Vec<u8>),
-    Revoke(Key<Provider>, Vec<u8>),
+    Revoke(Id, Key<Provider>),
     Read(Key<Provider>, Id),
     GC(Key<Provider>),
+    ReturnTxid(Option<Id>),
+    Init(Id),
     DropOut,
 }
 
@@ -26,6 +28,7 @@ pub struct BlobInit {
     tx: tokio::sync::mpsc::UnboundedSender<BlobEvent>,
     rx: tokio::sync::mpsc::UnboundedReceiver<BlobEvent>,
     service: Service,
+    id: Id,
     blob: Blob<Provider>,
 }
 
@@ -42,9 +45,11 @@ impl Builder for BlobBuilder {
 
     fn build(self) -> Self::State {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<BlobEvent>();
+
         BlobInit {
             tx,
             rx,
+            id: self.id.unwrap(),
             service: Service::new(),
             blob: Blob::new(),
         }
@@ -104,6 +109,11 @@ impl<H: LauncherSender<BlobEvent> + AknShutdown<Self>> Init<H> for BlobInit {
 
         self.blob = Blob::new();
 
+        if let Some(BlobEvent::Init(uid)) = self.rx.recv().await {
+            self.id = uid;
+            println!("Set blob id");
+        }
+
         _supervisor.as_mut().unwrap().status_change(self.service.clone());
         println!("starting blob");
         status
@@ -115,10 +125,30 @@ impl<H: LauncherSender<BlobEvent> + AknShutdown<Self>> EventLoop<H> for BlobInit
     async fn event_loop(&mut self, _status: Result<(), Need>, _supervisor: &mut Option<H>) -> Result<(), Need> {
         self.service.update_status(ServiceStatus::Running);
         _supervisor.as_mut().unwrap().status_change(self.service.clone());
-        {}
-        while let Some(BlobEvent::DropOut) = self.rx.recv().await {
-            self.rx.close();
+
+        match self.rx.recv().await {
+            Some(BlobEvent::Create(k, pay)) => {
+                let xid = self.blob.create_record(self.id, k, pay);
+
+                match self.tx.send(BlobEvent::ReturnTxid(xid)) {
+                    Ok(_) => {}
+                    Err(_) => panic!("Send error"),
+                };
+            }
+            Some(BlobEvent::GC(k)) => {
+                self.blob.garbage_collect(self.id, k);
+            }
+            Some(BlobEvent::Read(k, id)) => {
+                self.blob.read_record(id, k);
+            }
+            Some(BlobEvent::Revoke(id, k)) => self.blob.revoke_record(self.id, id, k),
+            Some(BlobEvent::DropOut) => {
+                self.rx.close();
+            }
+            Some(_) => {}
+            None => {}
         }
+
         _status
     }
 }

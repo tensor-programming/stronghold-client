@@ -5,6 +5,7 @@ use vault::Id;
 
 use serde::{Deserialize, Serialize};
 
+use crate::actor_test_client::blob::BlobEvent;
 use crate::line_error;
 use crate::provider::Provider;
 
@@ -22,10 +23,11 @@ pub struct Client {
 pub enum ClientEvent {
     Stop,
     ReadID,
+    CallBlob(BlobEvent),
 }
 
 pub struct ClientInit {
-    tx: tokio::sync::mpsc::UnboundedSender<ClientEvent>,
+    pub tx: tokio::sync::mpsc::UnboundedSender<ClientEvent>,
     rx: tokio::sync::mpsc::UnboundedReceiver<ClientEvent>,
     service: Service,
     client: Client,
@@ -41,6 +43,7 @@ impl ThroughType for ClientBuilder {
 
 impl Builder for ClientBuilder {
     type State = ClientInit;
+
     fn build(self) -> Self::State {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<ClientEvent>();
         ClientInit {
