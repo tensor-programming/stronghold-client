@@ -52,7 +52,7 @@ impl Cache {
         ret
     }
 
-    pub fn upload_data(self, map: HashMap<Vec<u8>, Vec<u8>>) {
+    pub fn upload_data(&self, map: HashMap<Vec<u8>, Vec<u8>>) {
         map.into_iter().for_each(|(k, v)| {
             self.table.insert(k, Value::new(v));
         });

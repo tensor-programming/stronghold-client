@@ -4,6 +4,7 @@ mod blob;
 mod channel;
 mod client;
 mod registry;
+mod stream;
 
 use crate::actor_test_client::blob::BlobBuilder;
 use crate::actor_test_client::client::{ClientBuilder, ClientEvent};
@@ -31,16 +32,16 @@ async fn main() {
     client.start(Some(NullSupervisor)).await;
 }
 
-#[tokio::test]
-async fn test_registry() {
-    impl Registry for ClientBuilder {};
+// #[tokio::test]
+// async fn test_registry() {
+//     impl Registry for ClientBuilder {};
 
-    let client = ClientBuilder::new();
-    let state = client.build();
+//     let client = ClientBuilder::new();
+//     let state = client.build();
 
-    ClientBuilder::register_once(state.tx.clone()).await;
+//     ClientBuilder::register_once(state.tx.clone()).await;
 
-    let new_sender = ClientBuilder::from_registry::<ClientEvent>().await.unwrap();
+//     let new_sender = ClientBuilder::from_registry::<ClientEvent>().await.unwrap();
 
-    assert_eq!(state.tx, new_sender);
-}
+//     assert_eq!(state.tx, new_sender);
+// }

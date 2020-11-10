@@ -2,29 +2,49 @@ use vault::{BoxProvider, DBView, DBWriter, Id, Key, RecordHint};
 
 use crate::{
     cache::{CRequest, CResult, Cache},
+    client::Snapshot,
     line_error,
 };
 
 use dashmap::DashMap;
 
-pub struct Blob<P: BoxProvider + Send + Sync + 'static> {
+use std::collections::HashMap;
+
+#[derive(Clone)]
+pub struct Blob<P: BoxProvider + Send + Sync + Clone + 'static> {
     vaults: DashMap<Key<P>, Option<DBView<P>>>,
     cache: Cache,
 }
 
-pub trait Bucket<P: BoxProvider + Send + Sync + 'static> {
+pub trait Bucket<P: BoxProvider + Send + Sync + Clone + 'static> {
     fn create_record(&mut self, uid: Id, key: Key<P>, payload: Vec<u8>) -> Option<Id>;
     fn add_vault(&mut self, key: &Key<P>, uid: Id);
     fn read_record(&mut self, uid: Id, key: Key<P>);
     fn garbage_collect(&mut self, uid: Id, key: Key<P>);
     fn revoke_record(&mut self, uid: Id, tx_id: Id, key: Key<P>);
     fn list_all_valid_by_key(&mut self, key: Key<P>);
+    fn offload_data(self) -> (Vec<Key<P>>, HashMap<Vec<u8>, Vec<u8>>);
 }
 
-impl<P: BoxProvider + Send + Sync + 'static> Blob<P> {
+impl<P: BoxProvider + Clone + Send + Sync + 'static> Blob<P> {
     pub fn new() -> Self {
         let cache = Cache::new();
         let vaults = DashMap::new();
+
+        Self { cache, vaults }
+    }
+
+    pub fn new_from_snapshot(snapshot: Snapshot<P>) -> Self {
+        let cache = Cache::new();
+        let vaults = DashMap::new();
+
+        cache.upload_data(snapshot.state);
+
+        let keys = snapshot.keys;
+
+        keys.iter().for_each(|k| {
+            vaults.insert(k.clone(), None);
+        });
 
         Self { cache, vaults }
     }
@@ -42,7 +62,7 @@ impl<P: BoxProvider + Send + Sync + 'static> Blob<P> {
     }
 }
 
-impl<P: BoxProvider + Send + Sync + 'static> Bucket<P> for Blob<P> {
+impl<P: BoxProvider + Clone + Send + Sync + 'static> Bucket<P> for Blob<P> {
     fn create_record(&mut self, uid: Id, key: Key<P>, payload: Vec<u8>) -> Option<Id> {
         let view = self.get_view(&key);
 
@@ -123,5 +143,12 @@ impl<P: BoxProvider + Send + Sync + 'static> Bucket<P> for Blob<P> {
         }
 
         self.reset_view(key);
+    }
+
+    fn offload_data(self) -> (Vec<Key<P>>, HashMap<Vec<u8>, Vec<u8>>) {
+        let dashmap = self.vaults.clone();
+        let keys: Vec<Key<P>> = dashmap.into_read_only().keys().into_iter().map(|k| k.clone()).collect();
+
+        (keys, self.cache.offload_data())
     }
 }

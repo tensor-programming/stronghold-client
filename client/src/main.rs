@@ -4,6 +4,7 @@ mod cache;
 mod client;
 mod data;
 mod provider;
+mod snap;
 
 pub use crate::cache::Cache;
 

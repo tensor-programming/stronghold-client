@@ -7,26 +7,37 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::data::Bucket;
+use crate::data::{Blob, Bucket};
 
-pub struct Client<P: BoxProvider + Send + Sync + 'static, B: Bucket<P>> {
+pub struct Client<P: BoxProvider + Clone + Send + Sync + 'static> {
     id: Id,
-    blobs: B,
+    blobs: Blob<P>,
     _provider: PhantomData<P>,
 }
 
 #[derive(Serialize, Deserialize)]
-pub struct Snapshot<P: BoxProvider> {
-    pub ids: HashSet<Id>,
+pub struct Snapshot<P: BoxProvider + Clone + Send + Sync> {
+    pub id: Id,
     pub keys: HashSet<Key<P>>,
-    state: HashMap<Vec<u8>, Vec<u8>>,
+    pub state: HashMap<Vec<u8>, Vec<u8>>,
 }
 
-impl<P: BoxProvider + Send + Sync + 'static, B: Bucket<P>> Client<P, B> {
-    pub fn new(id: Id, blobs: B) -> Self {
+impl<P: BoxProvider + Clone + Send + Sync + 'static> Client<P> {
+    pub fn new(id: Id, blobs: Blob<P>) -> Self {
         Self {
             id,
             blobs,
+            _provider: PhantomData,
+        }
+    }
+
+    pub fn new_from_snapshot(snapshot: Snapshot<P>) -> Self {
+        let id = snapshot.id;
+        let blobs = Blob::new_from_snapshot(snapshot);
+
+        Self {
+            id,
+            blobs: blobs,
             _provider: PhantomData,
         }
     }
@@ -56,6 +67,24 @@ impl<P: BoxProvider + Send + Sync + 'static, B: Bucket<P>> Client<P, B> {
     }
 }
 
+impl<P: BoxProvider + Clone + Send + Sync> Snapshot<P> {
+    pub fn new(client: &mut Client<P>) -> Self {
+        let id = client.id;
+        let (vkeys, state) = client.blobs.clone().offload_data();
+
+        let mut keys = HashSet::new();
+        vkeys.iter().for_each(|k| {
+            keys.insert(k.clone());
+        });
+
+        Self { id, keys, state }
+    }
+
+    pub fn offload(self) -> (Id, HashSet<Key<P>>, HashMap<Vec<u8>, Vec<u8>>) {
+        (self.id, self.keys, self.state)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,7 +93,7 @@ mod tests {
     use crate::provider::Provider;
 
     #[test]
-    fn test_stuff() {
+    fn test_vaults() {
         let id = Id::random::<Provider>().expect(line_error!());
         let key = Key::<Provider>::random().expect(line_error!());
 
