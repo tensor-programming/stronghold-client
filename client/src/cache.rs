@@ -3,14 +3,17 @@ use std::{collections::HashMap, fmt::Debug};
 use dashmap::DashMap;
 use vault::{DeleteRequest, ListResult, ReadRequest, ReadResult, WriteRequest};
 
-use crate::line_error;
+use zeroize_derive::Zeroize;
 
-#[derive(Clone, Debug)]
+use crate::line_error;
+use crate::secret::{CloneSecret, ReadSecret, Secret};
+
+#[derive(Clone, Debug, Zeroize)]
 pub struct Value<T>(T);
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Cache {
-    table: DashMap<Vec<u8>, Value<Vec<u8>>>,
+    table: DashMap<Vec<u8>, Value<Secret<Vec<u8>>>>,
 }
 
 #[derive(Clone)]
@@ -35,10 +38,10 @@ impl Cache {
     }
 
     fn add_data(&mut self, key: Vec<u8>, value: Vec<u8>) {
-        self.table.insert(key, Value::new(value));
+        self.table.insert(key, Value::new(Secret::new(value)));
     }
 
-    fn read_data(&self, key: Vec<u8>) -> Value<Vec<u8>> {
+    fn read_data(&self, key: Vec<u8>) -> Value<Secret<Vec<u8>>> {
         self.table.get(&key).expect(line_error!()).clone()
     }
 
@@ -46,7 +49,7 @@ impl Cache {
         let mut ret: HashMap<Vec<u8>, Vec<u8>> = HashMap::new();
 
         self.table.into_iter().for_each(|(k, v)| {
-            ret.insert(k, v.0);
+            ret.insert(k, v.0.read_secret().to_vec());
         });
 
         ret
@@ -54,7 +57,7 @@ impl Cache {
 
     pub fn upload_data(&self, map: HashMap<Vec<u8>, Vec<u8>>) {
         map.into_iter().for_each(|(k, v)| {
-            self.table.insert(k, Value::new(v));
+            self.table.insert(k, Value::new(Secret::new(v)));
         });
     }
 
@@ -74,7 +77,7 @@ impl Cache {
             }
             CRequest::Read(read) => {
                 let state = self.read_data(read.id().to_vec());
-                CResult::Read(ReadResult::new(read.into(), state.0))
+                CResult::Read(ReadResult::new(read.into(), state.0.read_secret().to_vec()))
             }
         };
         result
@@ -95,3 +98,5 @@ impl CResult {
         }
     }
 }
+
+impl CloneSecret for Vec<u8> {}
